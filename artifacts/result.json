@@ -11,8 +11,8 @@
   "wslDistro": "Ubuntu-26.04",
   "B": {
     "success": false,
-    "canceled": true,
-    "error": "任务已取消",
-    "side": "B"
+    "side": "B",
+    "error": "推送 23209-B 连续 2 次失败：fatal: unable to access 'https://github.com/Rrr119/ovs.git/': GnuTLS, handshake failed: The TLS connection was non-properly terminated.",
+    "attempts": 4
   }
 }
