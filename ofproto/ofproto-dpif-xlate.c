@@ -6190,6 +6190,7 @@ odp_actions_are_reversible(const void *data, size_t size)
         case OVS_ACTION_ATTR_SET_MASKED:
         case OVS_ACTION_ATTR_CLONE:
         case OVS_ACTION_ATTR_PSAMPLE:
+        case OVS_ACTION_ATTR_FLOW_STATS:
         case OVS_ACTION_ATTR_LB_OUTPUT:
             break;
 

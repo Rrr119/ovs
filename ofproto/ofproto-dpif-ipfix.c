@@ -3127,6 +3127,7 @@ dpif_ipfix_read_actions(const struct flow *flow,
         case OVS_ACTION_ATTR_ADD_MPLS:
         case OVS_ACTION_ATTR_DEC_TTL:
         case OVS_ACTION_ATTR_PSAMPLE:
+        case OVS_ACTION_ATTR_FLOW_STATS:
         case __OVS_ACTION_ATTR_MAX:
         default:
             break;

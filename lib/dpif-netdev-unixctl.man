@@ -228,3 +228,14 @@ recirculation (only in balance-tcp mode).
 When this is the case, the above command prints the load-balancing information
 of the bonds configured in datapath \fIdp\fR showing the interface associated
 with each bucket (hash).
+.
+.IP "\fBdpif-netdev/flow-stats-show\fR"
+Prints the per-flow statistics maintained by every installed
+\fBflow_stats\fR datapath action.  For each action instance the output lists
+its unique identifier, the cumulative packet and byte counters, and the
+configured sFlow sampling probability (\fB0\fR means sFlow export is
+disabled).
+.
+.IP "\fBdpif-netdev/flow-stats-clear\fR"
+Resets the packet and byte counters of every \fBflow_stats\fR action to zero
+without removing the action or the datapath flows that reference it.

@@ -397,6 +397,12 @@ psample(group=12,cookie=0xf1020304050607080910111213141516)
 psample(group=12)
 sample(sample=50.0%,actions(psample(group=12,cookie=0xf1020304)))
 sample(sample=50.0%,actions(userspace(pid=42,userdata(0102030400000000)),psample(group=12)))
+flow_stats()
+flow_stats(sflow_sample=50.0%)
+flow_stats(sflow_sample=100.0%)
+1,flow_stats(),2
+sample(sample=50.0%,actions(flow_stats()))
+clone(flow_stats(),1)
 ])
 AT_CHECK_UNQUOTED([ovstest test-odp parse-actions < actions.txt], [0],
   [`cat actions.txt`
@@ -416,8 +422,16 @@ psample(group=12,cookie=0x010203,group=12)
 psample(group=abc)
 psample(group=12,cookie=wrong)
 psample()
+flow_stats(sflow_sample=120.0%)
+flow_stats(bad=1)
+flow_stats(sflow_sample=abc)
+flow_stats(sflow_sample=10.0%
 ])
 AT_CHECK_UNQUOTED([ovstest test-odp parse-actions < actions.txt], [0], [dnl
+odp_actions_from_string: error
+odp_actions_from_string: error
+odp_actions_from_string: error
+odp_actions_from_string: error
 odp_actions_from_string: error
 odp_actions_from_string: error
 odp_actions_from_string: error

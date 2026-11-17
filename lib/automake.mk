@@ -98,6 +98,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/dpif-offload-provider.h \
 	lib/dpif-provider.h \
 	lib/dpif.c \
+	lib/flow-stats.c \
+	lib/flow-stats.h \
 	lib/dpif.h \
 	lib/heap.c \
 	lib/heap.h \

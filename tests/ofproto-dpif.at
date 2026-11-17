@@ -8664,6 +8664,52 @@ AT_CHECK([tail -1 stdout], [0],
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
+AT_SETUP([ofproto-dpif - flow_stats action sFlow export])
+OVS_VSWITCHD_START(
+  [add-port br0 p1 -- set interface p1 type=dummy ofport_request=1 -- \
+   add-port br0 p2 -- set interface p2 type=dummy ofport_request=2 -- \
+   set bridge br0 datapath-type=dummy other-config:datapath-id=1234 \
+                     fail-mode=secure])
+
+on_exit 'kill `cat test-sflow.pid`'
+AT_CHECK([ovstest test-sflow --log-file --detach --no-chdir --pidfile 0:127.0.0.1 > sflow.log], [0], [], [ignore])
+AT_CAPTURE_FILE([sflow.log])
+PARSE_LISTENING_PORT([test-sflow.log], [SFLOW_PORT])
+
+ovs-appctl time/stop
+ovs-vsctl \
+     set Interface p1 options:ifindex=1004 -- \
+     set Interface p2 options:ifindex=1003 -- \
+     set Bridge br0 sflow=@sf -- \
+     --id=@sf create sflow targets=\"127.0.0.1:$SFLOW_PORT\" \
+       header=128 sampling=1 polling=1 agent=127.0.0.1
+
+dnl Let the sFlow agent finish initializing its samplers.
+AT_CHECK([ovs-appctl time/warp 2000 100], [0], [ignore])
+
+dnl Install a datapath flow whose flow_stats action samples every packet to
+dnl sFlow while still forwarding to p2.
+AT_CHECK([ovs-appctl dpctl/add-flow \
+  "in_port(1),eth_type(0x0800),ipv4(src=10.0.0.1,dst=10.0.0.2,frag=no)" \
+  "flow_stats(sflow_sample=100.0%),2"])
+
+for i in 1 2; do
+  AT_CHECK([ovs-appctl netdev-dummy/receive p1 \
+    'in_port(1),eth(src=50:54:00:00:00:05,dst=50:54:00:00:00:07),eth_type(0x0800),ipv4(src=10.0.0.1,dst=10.0.0.2,proto=1,tos=0,ttl=64,frag=no),icmp(type=8,code=0)' --len 100])
+done
+
+dnl Give the sFlow agent time to flush the sampled datagrams.
+AT_CHECK([ovs-appctl time/warp 2000 100], [0], [ignore])
+OVS_VSWITCHD_STOP
+OVS_APP_EXIT_AND_WAIT([test-sflow])
+
+dnl Both packets must have been exported as flow samples to the collector.
+AT_CHECK([grep -c '^HEADER' sflow.log], [0], [2
+])
+AT_CHECK([grep 'in_ifindex=1004' sflow.log | head -n 1], [0], [ignore])
+
+AT_CLEANUP
+
 AT_SETUP([ofproto-dpif - sFlow packet sampling - IPv4 collector])
 CHECK_SFLOW_SAMPLING_PACKET([127.0.0.1])
 AT_CLEANUP

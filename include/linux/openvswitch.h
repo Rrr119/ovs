@@ -1028,6 +1028,31 @@ enum ovs_psample_attr {
 #define OVS_PSAMPLE_ATTR_MAX (__OVS_PSAMPLE_ATTR_MAX - 1)
 
 /**
+ * enum ovs_flow_stats_attr - Attributes for %OVS_ACTION_ATTR_FLOW_STATS
+ * action.
+ *
+ * @OVS_FLOW_STATS_ATTR_SFLOW_PROBABILITY: Optional 32-bit sFlow sampling
+ * probability, using the same interpretation as
+ * %OVS_SAMPLE_ATTR_PROBABILITY: a value of 0 (the default) disables sFlow
+ * export, %UINT32_MAX samples every packet and intermediate values sample
+ * intermediate fractions of the packets.  Packet and byte counters are
+ * collected regardless of this attribute.
+ *
+ * The action is a no-op with respect to packet forwarding: it does not modify,
+ * drop or consume the packet, so it can be freely combined with other
+ * actions, including %OVS_ACTION_ATTR_DROP.
+ */
+enum ovs_flow_stats_attr {
+	OVS_FLOW_STATS_ATTR_UNSPEC,
+	OVS_FLOW_STATS_ATTR_SFLOW_PROBABILITY, /* u32 number. */
+
+	/* private: */
+	__OVS_FLOW_STATS_ATTR_MAX
+};
+
+#define OVS_FLOW_STATS_ATTR_MAX (__OVS_FLOW_STATS_ATTR_MAX - 1)
+
+/**
  * enum ovs_action_attr - Action types.
  *
  * @OVS_ACTION_ATTR_OUTPUT: Output packet to port.
@@ -1093,6 +1118,9 @@ enum ovs_psample_attr {
  * @OVS_ACTION_ATTR_DROP: Explicit drop action.
  * @OVS_ACTION_ATTR_PSAMPLE: Send a sample of the packet to external observers
  * via psample.
+ * @OVS_ACTION_ATTR_FLOW_STATS: Collect per-flow packet and byte counters and,
+ * optionally, feed the packet to sFlow sampling.  The action never modifies or
+ * drops the packet, so it can be combined with any other actions.
  */
 
 enum ovs_action_attr {
@@ -1127,6 +1155,7 @@ enum ovs_action_attr {
 	OVS_ACTION_ATTR_PSAMPLE,      /* Nested OVS_PSAMPLE_ATTR_*. */
 
 #ifndef __KERNEL__
+	OVS_ACTION_ATTR_FLOW_STATS,   /* Nested OVS_FLOW_STATS_ATTR_*. */
 	OVS_ACTION_ATTR_TUNNEL_PUSH,   /* struct ovs_action_push_tnl*/
 	OVS_ACTION_ATTR_TUNNEL_POP,    /* u32 port number. */
 	OVS_ACTION_ATTR_LB_OUTPUT,     /* u32 bond-id. */

@@ -1,5 +1,12 @@
 Post-v4.0.0
 --------------------
+   - Userspace datapath:
+     * Added a new 'flow_stats' datapath action that collects per-flow
+       packet and byte counters and can optionally export observed packets to
+       sFlow.  The action never modifies or drops packets and can be combined
+       with any other action.  Counters are available through the new
+       'dpif-netdev/flow-stats-show' and 'dpif-netdev/flow-stats-clear'
+       ovs-appctl commands.
    - ovs-appctl:
      * Added JSON output support (--format json) for 'fdb/stats-show',
        'upcall/show', 'dpif-netdev/pmd-sleep-show'.

@@ -51,6 +51,7 @@
 #include "dpif-provider.h"
 #include "dummy.h"
 #include "fat-rwlock.h"
+#include "flow-stats.h"
 #include "flow.h"
 #include "hmapx.h"
 #include "id-fpool.h"
@@ -498,6 +499,8 @@ static void dp_netdev_input(struct dp_netdev_pmd_thread *,
                             struct dp_packet_batch *, odp_port_t port_no);
 static void dp_netdev_recirculate(struct dp_netdev_pmd_thread *,
                                   struct dp_packet_batch *);
+static void dp_netdev_flow_stats_sflow(void *dp, const struct nlattr *action,
+                                       struct dp_packet_batch *batch);
 
 static void dp_netdev_disable_upcall(struct dp_netdev *);
 static void dp_netdev_pmd_reload_done(struct dp_netdev_pmd_thread *pmd);
@@ -1128,6 +1131,42 @@ dpif_netdev_bond_show(struct unixctl_conn *conn, int argc,
 }
 
 
+static void
+dpif_netdev_flow_stats_show(struct unixctl_conn *conn,
+                            int argc OVS_UNUSED,
+                            const char *argv[] OVS_UNUSED,
+                            void *aux OVS_UNUSED)
+{
+    struct ds reply = DS_EMPTY_INITIALIZER;
+    size_t count = flow_stats_entry_count();
+
+    ds_put_cstr(&reply, "flow_stats actions count: ");
+    ds_put_format(&reply, "%"PRIuSIZE"\n", count);
+    for (size_t i = 0; i < count; i++) {
+        const struct flow_stats_entry *entry = flow_stats_entry_get(i);
+        uint64_t packets, bytes;
+
+        atomic_read_relaxed(&entry->packet_count, &packets);
+        atomic_read_relaxed(&entry->byte_count, &bytes);
+        ds_put_format(&reply,
+                      "id=%"PRIu64" packets=%"PRIu64" bytes=%"PRIu64
+                      " sflow_probability=%"PRIu32"\n",
+                      entry->id, packets, bytes, entry->sflow_probability);
+    }
+    unixctl_command_reply(conn, ds_cstr(&reply));
+    ds_destroy(&reply);
+}
+
+static void
+dpif_netdev_flow_stats_clear(struct unixctl_conn *conn,
+                             int argc OVS_UNUSED,
+                             const char *argv[] OVS_UNUSED,
+                             void *aux OVS_UNUSED)
+{
+    flow_stats_reset_counters();
+    unixctl_command_reply(conn, "OK");
+}
+
 static int
 dpif_netdev_init(void)
 {
@@ -1166,6 +1205,11 @@ dpif_netdev_init(void)
     unixctl_command_register("dpif-netdev/bond-show", "[dp]",
                              0, 1, dpif_netdev_bond_show,
                              NULL);
+    unixctl_command_register("dpif-netdev/flow-stats-show", NULL,
+                             0, 0, dpif_netdev_flow_stats_show, NULL);
+    unixctl_command_register("dpif-netdev/flow-stats-clear", NULL,
+                             0, 0, dpif_netdev_flow_stats_clear, NULL);
+    flow_stats_set_sflow_cb(dp_netdev_flow_stats_sflow);
     return 0;
 }
 
@@ -8076,6 +8120,60 @@ dp_execute_lb_output_action(struct dp_netdev_pmd_thread *pmd,
     }
 }
 
+/* Forwards packets observed by a FLOW_STATS action to sFlow through the
+ * existing userspace action upcall path.  Packets are sampled independently
+ * with the probability carried by the action, matching the semantics of
+ * OVS_ACTION_ATTR_SAMPLE.  The batch itself is never consumed or modified. */
+static void
+dp_netdev_flow_stats_sflow(void *dp_, const struct nlattr *action,
+                           struct dp_packet_batch *batch)
+{
+    struct dp_netdev_execute_aux *aux = dp_;
+    struct dp_netdev_pmd_thread *pmd = aux->pmd;
+    const struct nlattr *prob_attr;
+    uint32_t probability;
+    struct dp_packet *packet;
+    struct user_action_cookie cookie;
+
+    prob_attr = nl_attr_find_nested(action,
+                                    OVS_FLOW_STATS_ATTR_SFLOW_PROBABILITY);
+    if (!prob_attr || !(probability = nl_attr_get_u32(prob_attr))) {
+        return;
+    }
+
+    memset(&cookie, 0, sizeof cookie);
+    cookie.type = USER_ACTION_COOKIE_SFLOW;
+    cookie.ofp_in_port = aux->flow->in_port.ofp_port;
+    cookie.sflow.vlan_tci = aux->flow->vlans[0].tci;
+    cookie.sflow.output = 0;
+
+    struct ofpbuf user_action;
+    ofpbuf_init(&user_action, 0);
+    odp_put_userspace_action(0, &cookie, sizeof cookie, ODPP_NONE, false,
+                             &user_action, NULL);
+    const struct nlattr *userdata
+        = nl_attr_find_nested(user_action.data, OVS_USERSPACE_ATTR_USERDATA);
+
+    DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
+        struct ofpbuf actions;
+        struct flow flow;
+        ovs_u128 ufid;
+
+        if (random_uint32() >= probability) {
+            continue;
+        }
+
+        ofpbuf_init(&actions, 0);
+        flow_extract(packet, &flow);
+        odp_flow_key_hash(&flow, sizeof flow, &ufid);
+        dp_netdev_upcall(pmd, packet, &flow, NULL, &ufid, DPIF_UC_ACTION,
+                         userdata, &actions, NULL);
+        ofpbuf_uninit(&actions);
+    }
+
+    ofpbuf_uninit(&user_action);
+}
+
 static void
 dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
               const struct nlattr *a, bool should_steal)
@@ -8410,6 +8508,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     case OVS_ACTION_ATTR_ADD_MPLS:
     case OVS_ACTION_ATTR_DEC_TTL:
     case OVS_ACTION_ATTR_PSAMPLE:
+    case OVS_ACTION_ATTR_FLOW_STATS:
     case __OVS_ACTION_ATTR_MAX:
         OVS_NOT_REACHED();
     }

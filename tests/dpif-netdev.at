@@ -3774,3 +3774,66 @@ OVS_VSWITCHD_STOP(["dnl
   /.*failed to put.*$/d
   /.*failed to flow_del.*$/d"])
 AT_CLEANUP
+
+AT_SETUP([dpif-netdev - flow_stats action per-flow counters])
+OVS_VSWITCHD_START(
+  [add-port br0 p1 -- set interface p1 type=dummy ofport_request=1 -- \
+   add-port br0 p2 -- set interface p2 type=dummy ofport_request=2 -- \
+   set bridge br0 datapath-type=dummy other-config:datapath-id=1234 \
+                     fail-mode=secure])
+
+dnl Start with an empty datapath and no flow_stats entries.
+AT_CHECK([ovs-appctl dpctl/del-flows])
+AT_CHECK([ovs-appctl dpif-netdev/flow-stats-show], [0], [dnl
+flow_stats actions count: 0
+])
+
+dnl A flow_stats action composed with an output action.
+AT_CHECK([ovs-appctl dpctl/add-flow \
+  "in_port(1),eth_type(0x0800),ipv4(src=10.0.0.1,dst=10.0.0.2,frag=no)" \
+  "flow_stats(),2"])
+dnl A flow_stats action with sFlow enabled, composed with an output and
+dnl placed after another action to verify ordering compatibility.
+AT_CHECK([ovs-appctl dpctl/add-flow \
+  "in_port(1),eth_type(0x0800),ipv4(src=10.0.0.3,dst=10.0.0.4,frag=no)" \
+  "2,flow_stats(sflow_sample=100.0%)"])
+
+dnl The action round-trips through the datapath flow dump.
+OVS_WAIT_UNTIL([ovs-appctl dpctl/dump-flows | grep -q flow_stats])
+AT_CHECK([ovs-appctl dpctl/dump-flows | sed 's/.*actions:/actions:/' | grep flow_stats | sort -u],
+  [0], [dnl
+actions:2,flow_stats(sflow_sample=100.0%)
+actions:flow_stats(),2
+])
+
+dnl Send three 100-byte packets through the output flow.
+for i in 1 2 3; do
+  AT_CHECK([ovs-appctl netdev-dummy/receive p1 \
+    'in_port(1),eth(src=50:54:00:00:00:01,dst=50:54:00:00:00:02),eth_type(0x0800),ipv4(src=10.0.0.1,dst=10.0.0.2,proto=1,ttl=64,frag=no)' --len 100])
+done
+dnl And two 200-byte packets through the sFlow-enabled flow.
+for i in 1 2; do
+  AT_CHECK([ovs-appctl netdev-dummy/receive p1 \
+    'in_port(1),eth(src=50:54:00:00:00:03,dst=50:54:00:00:00:04),eth_type(0x0800),ipv4(src=10.0.0.3,dst=10.0.0.4,proto=1,ttl=64,frag=no)' --len 200])
+done
+
+OVS_WAIT_UNTIL([ovs-appctl dpif-netdev/flow-stats-show | grep -q 'packets=3'])
+AT_CHECK([ovs-appctl dpif-netdev/flow-stats-show | awk '{if ($1 == "flow_stats") print; else print $2, $3, $4, $5}' | sort | sed 's/ $//'],
+  [0], [dnl
+flow_stats actions count: 2
+packets=2 bytes=400 sflow_probability=4294967295
+packets=3 bytes=300 sflow_probability=0
+])
+
+dnl Counters can be reset without touching the installed flows.
+AT_CHECK([ovs-appctl dpif-netdev/flow-stats-clear], [0], [OK
+])
+AT_CHECK([ovs-appctl dpif-netdev/flow-stats-show | awk '{if ($1 == "flow_stats") print; else print $2, $3, $4, $5}' | sort | sed 's/ $//'],
+  [0], [dnl
+flow_stats actions count: 2
+packets=0 bytes=0 sflow_probability=0
+packets=0 bytes=0 sflow_probability=4294967295
+])
+
+OVS_VSWITCHD_STOP
+AT_CLEANUP

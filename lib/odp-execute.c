@@ -37,6 +37,7 @@
 #include "util.h"
 #include "csum.h"
 #include "conntrack.h"
+#include "flow-stats.h"
 #include "openvswitch/vlog.h"
 #include "unixctl.h"
 
@@ -885,6 +886,7 @@ requires_datapath_assistance(const struct nlattr *a)
     case OVS_ACTION_ATTR_ADD_MPLS:
     case OVS_ACTION_ATTR_DEC_TTL:
     case OVS_ACTION_ATTR_DROP:
+    case OVS_ACTION_ATTR_FLOW_STATS:
         return false;
 
     case OVS_ACTION_ATTR_SAMPLE: {
@@ -1167,6 +1169,9 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
             dp_packet_delete_batch(batch, steal);
             return;
         }
+        case OVS_ACTION_ATTR_FLOW_STATS:
+            flow_stats_record(dp, a, batch);
+            break;
         case OVS_ACTION_ATTR_OUTPUT:
         case OVS_ACTION_ATTR_LB_OUTPUT:
         case OVS_ACTION_ATTR_TUNNEL_PUSH:

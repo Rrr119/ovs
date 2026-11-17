@@ -1234,6 +1234,17 @@ upcall_receive(struct upcall *upcall, const struct dpif_backer *backer,
         if (error) {
             return error;
         }
+    } else if (upcall->type == SFLOW_UPCALL
+               && uuid_is_zero(&upcall->cookie.ofproto_uuid)) {
+        /* A FLOW_STATS action generates sFlow upcalls from the datapath
+         * without an ofproto context.  Resolve the ofproto from the packet's
+         * input port instead. */
+        error = xlate_lookup(backer, flow, &upcall->ofproto, &upcall->ipfix,
+                             &upcall->sflow, NULL, &upcall->ofp_in_port,
+                             errorp);
+        if (error) {
+            return error;
+        }
     } else {
         struct ofproto_dpif *ofproto
             = ofproto_dpif_lookup_by_uuid(&upcall->cookie.ofproto_uuid);

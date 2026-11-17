@@ -146,6 +146,7 @@ odp_action_len(uint16_t type)
     case OVS_ACTION_ATTR_DEC_TTL: return ATTR_LEN_VARIABLE;
     case OVS_ACTION_ATTR_DROP: return sizeof(uint32_t);
     case OVS_ACTION_ATTR_PSAMPLE: return ATTR_LEN_VARIABLE;
+    case OVS_ACTION_ATTR_FLOW_STATS: return ATTR_LEN_VARIABLE;
 
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -1288,6 +1289,29 @@ format_odp_psample_action(struct ds *ds, const struct nlattr *attr)
 }
 
 static void
+format_odp_flow_stats_action(struct ds *ds, const struct nlattr *attr)
+{
+    const struct nlattr *a;
+    unsigned int left;
+    uint32_t probability = 0;
+
+    NL_NESTED_FOR_EACH (a, left, attr) {
+        if (a->nla_type == OVS_FLOW_STATS_ATTR_SFLOW_PROBABILITY) {
+            probability = nl_attr_get_u32(a);
+        }
+    }
+
+    ds_put_cstr(ds, "flow_stats(");
+    if (probability) {
+        double percentage = (100.0 * probability) / UINT32_MAX;
+
+        ds_put_format(ds, "sflow_sample=%.1f%%,", percentage);
+    }
+    ds_chomp(ds, ',');
+    ds_put_char(ds, ')');
+}
+
+static void
 format_odp_action(struct ds *ds, const struct nlattr *a,
                   const struct hmap *portno_names)
 {
@@ -1448,6 +1472,9 @@ format_odp_action(struct ds *ds, const struct nlattr *a,
         break;
     case OVS_ACTION_ATTR_PSAMPLE:
         format_odp_psample_action(ds, a);
+        break;
+    case OVS_ACTION_ATTR_FLOW_STATS:
+        format_odp_flow_stats_action(ds, a);
         break;
     case OVS_ACTION_ATTR_UNSPEC:
     case __OVS_ACTION_ATTR_MAX:
@@ -2547,6 +2574,45 @@ parse_odp_psample_action(const char *s, struct ofpbuf *actions)
 }
 
 static int
+parse_odp_flow_stats_action(const char *s, struct ofpbuf *actions)
+{
+    double percentage = 0.0;
+    uint32_t probability = 0;
+    int n = 0;
+
+    if (!ovs_scan_len(s, &n, "flow_stats(")) {
+        return -EINVAL;
+    }
+
+    n += strspn(s + n, delimiters);
+    if (s[n] != ')') {
+        int n1 = 0;
+
+        if (ovs_scan(&s[n], "sflow_sample=%lf%%%n", &percentage, &n1)
+            && n1 > 0) {
+            if (percentage < 0.0 || percentage > 100.0) {
+                return -EINVAL;
+            }
+            probability = percentage == 0.0 ? 0
+                : MIN(UINT32_MAX,
+                      (uint32_t)(percentage / 100.0 * UINT32_MAX + 0.5));
+            n += n1;
+            n += strspn(s + n, delimiters);
+        } else {
+            return -EINVAL;
+        }
+    }
+
+    if (s[n] != ')') {
+        return -EINVAL;
+    }
+    n++;
+
+    odp_put_flow_stats_action(actions, probability);
+    return n;
+}
+
+static int
 parse_action_list(struct parse_odp_context *context, const char *s,
                   struct ofpbuf *actions)
 {
@@ -2903,6 +2969,10 @@ parse_odp_action__(struct parse_odp_context *context, const char *s,
 
     if (!strncmp(s, "psample(", 8)) {
         return parse_odp_psample_action(s, actions);
+    }
+
+    if (!strncmp(s, "flow_stats(", 11)) {
+        return parse_odp_flow_stats_action(s, actions);
     }
 
     {
@@ -8027,6 +8097,21 @@ odp_put_psample_action(struct ofpbuf *odp_actions, uint32_t group_id,
         ovs_assert(cookie_len <= OVS_PSAMPLE_COOKIE_MAX_SIZE);
         nl_msg_put_unspec(odp_actions, OVS_PSAMPLE_ATTR_COOKIE, cookie,
                           cookie_len);
+    }
+
+    nl_msg_end_nested(odp_actions, offset);
+}
+
+void
+odp_put_flow_stats_action(struct ofpbuf *odp_actions,
+                          uint32_t sflow_probability)
+{
+    size_t offset = nl_msg_start_nested_with_flag(odp_actions,
+                                                  OVS_ACTION_ATTR_FLOW_STATS);
+
+    if (sflow_probability) {
+        nl_msg_put_u32(odp_actions, OVS_FLOW_STATS_ATTR_SFLOW_PROBABILITY,
+                       sflow_probability);
     }
 
     nl_msg_end_nested(odp_actions, offset);

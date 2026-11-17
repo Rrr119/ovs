@@ -239,6 +239,57 @@ is ordinarily set in a vlan attribute expressly to allow this situation to be
 distinguished.  Thus, the flow key in this second example unambiguously
 indicates a missing or malformed VLAN TCI.
 
+Datapath Actions
+----------------
+
+In addition to the flow key, every datapath flow carries an ordered list of
+actions that the datapath executes for each matching packet.  Most actions
+forward or modify the packet; the ``flow_stats`` action is special because it
+only observes traffic.
+
+``flow_stats``
+~~~~~~~~~~~~~~
+
+The ``OVS_ACTION_ATTR_FLOW_STATS`` action collects per-flow traffic statistics
+and can optionally feed observed packets to sFlow.  It accepts the following
+nested attribute:
+
+``OVS_FLOW_STATS_ATTR_SFLOW_PROBABILITY``
+    Optional 32-bit unsigned integer selecting the fraction of packets that are
+    also exported to sFlow, using the same interpretation as
+    ``OVS_SAMPLE_ATTR_PROBABILITY``: ``0`` (the default) disables sFlow export,
+    ``UINT32_MAX`` samples every packet, and intermediate values sample an
+    intermediate fraction.  The packet and byte counters described below are
+    always updated, regardless of this value.
+
+The action maintains two counters for every installed instance:
+
+- packet count, incremented once for every packet that reaches the action;
+- byte count, incremented by the size of every packet that reaches the action.
+
+Counters are kept per action instance, so all datapath flows that install the
+same ``flow_stats`` action share and aggregate into the same counters.  The
+userspace datapath exposes them through the ``dpif-netdev/flow-stats-show``
+and ``dpif-netdev/flow-stats-clear`` unixctl commands.
+
+``flow_stats`` never modifies, drops, or consumes the packet, which makes it
+safe to combine with any other action, including ``output``, ``drop``,
+``sample``, and nested actions such as ``clone``.  It may appear more than once
+and at any position in an action list; in that case each instance keeps its
+own counters.  Its string representation, as printed and accepted by
+``ovs-appctl dpctl`` and ``ovstest test-odp parse-actions``, is::
+
+    flow_stats()
+    flow_stats(sflow_sample=50.0%)
+
+The percentage in ``sflow_sample`` mirrors the probability attribute, so
+``100.0%`` encodes ``UINT32_MAX`` and omitting the option (or using ``0.0%``)
+disables sFlow export while retaining packet and byte counting.
+
+This action is implemented by the userspace (``dpif-netdev``) datapath only
+and is therefore defined outside of the ``__KERNEL__`` portion of the
+``OVS_ACTION_ATTR_*`` enumeration.
+
 Other Rules
 -----------
 
