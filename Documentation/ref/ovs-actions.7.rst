@@ -1393,6 +1393,37 @@ supported.
 This action was added in Open vSwitch 2.14.
 
 
+The ``sec_policy`` action
+-------------------------
+..
+  name: SEC_POLICY
+
+**Syntax**:
+  | ``sec_policy(id=``\ *policy_id*\ ``,verdict=``\ *verdict*\ ``)``
+
+The ``sec_policy`` action implements a security policy checkpoint for
+virtual network security policies enforced with flow tables.  The
+*policy_id* is a 16-bit identifier of the security policy being enforced,
+and *verdict* is either ``allow`` or ``deny``:
+
+- With verdict ``allow``, the packet passes the checkpoint and the pipeline
+  continues with the remaining actions.
+
+- With verdict ``deny``, the packet violates the security policy and is
+  dropped immediately; no further actions are executed.
+
+The action is a Nicira extension action, so it can be used with any OpenFlow
+version and combined with other actions, including output to a group table.
+When it is used in a group bucket, a ``deny`` verdict only drops the packet
+copy processed by that bucket; other buckets are still executed.
+
+Examples:
+
+  - ``sec_policy(id=1,verdict=allow),output:2``
+  - ``sec_policy(id=10,verdict=deny)``
+  - ``group_id=1,type=all,bucket=sec_policy(id=1,verdict=deny),output:2,bucket=output:3``
+
+
 Metadata Actions
 ================
 

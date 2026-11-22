@@ -1,0 +1,17 @@
+{
+  "root": "/home/dev/feedback/uid34515",
+  "B": "/home/dev/feedback/uid34515",
+  "sha": "c33407af3ad8b727f206b3d1b94fbd5421fcd723",
+  "wslDistro": "Ubuntu-26.04",
+  "source": {
+    "owner": "openvswitch",
+    "repo": "ovs",
+    "sha": "c33407af3ad8b727f206b3d1b94fbd5421fcd723"
+  },
+  "fork": {
+    "owner": "Rrr119",
+    "repo": "ovs",
+    "cloneUrl": "https://github.com/Rrr119/ovs.git"
+  },
+  "at": "2026-11-22T20:27:14.742Z"
+}

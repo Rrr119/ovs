@@ -126,6 +126,7 @@ struct vl_mff_map;
     OFPACT(CLONE,           ofpact_nest,        actions, "clone")       \
     OFPACT(CHECK_PKT_LARGER, ofpact_check_pkt_larger, ofpact,           \
            "check_pkt_larger")                                          \
+    OFPACT(SEC_POLICY,      ofpact_sec_policy,  ofpact, "sec_policy")   \
                                                                         \
     /* Debugging actions.                                               \
      *                                                                  \
@@ -657,6 +658,25 @@ struct ofpact_check_pkt_larger {
         uint16_t pkt_len;
     );
 };
+
+/* OFPACT_SEC_POLICY.
+ *
+ * Used for NXAST_SEC_POLICY. */
+
+/* Security policy verdicts. */
+enum sec_policy_verdict {
+    SEC_POLICY_DENY = 0,        /* Drop the packet. */
+    SEC_POLICY_ALLOW = 1,       /* Continue the pipeline. */
+};
+
+struct ofpact_sec_policy {
+    OFPACT_PADDED_MEMBERS(
+        struct ofpact ofpact;
+        uint16_t policy_id;     /* Security policy identifier. */
+        uint8_t verdict;        /* enum sec_policy_verdict. */
+    );
+};
+
 /* OFPACT_WRITE_ACTIONS, OFPACT_CLONE.
  *
  * Used for OFPIT11_WRITE_ACTIONS, NXAST_CLONE. */

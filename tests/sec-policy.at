@@ -1,0 +1,189 @@
+AT_BANNER([sec_policy action])
+
+AT_SETUP([sec_policy - parse allow])
+AT_CHECK([ovs-ofctl parse-flow 'actions=sec_policy(id=1,verdict=allow),output:2'],
+         [0], [stdout])
+AT_CHECK([grep 'ADD actions=sec_policy(id=1,verdict=allow),output:2' stdout],
+         [0], [ignore])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - parse deny OpenFlow13])
+AT_CHECK([ovs-ofctl -O OpenFlow13 parse-flow 'actions=sec_policy(id=2,verdict=deny)'],
+         [0], [stdout])
+AT_CHECK([grep 'OXM-OpenFlow13' stdout], [0], [ignore])
+AT_CHECK([grep 'ADD actions=sec_policy(id=2,verdict=deny)' stdout],
+         [0], [ignore])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - parse max policy id])
+AT_CHECK([ovs-ofctl parse-flow 'actions=sec_policy(id=65535,verdict=allow)'],
+         [0], [stdout])
+AT_CHECK([grep 'ADD actions=sec_policy(id=65535,verdict=allow)' stdout],
+         [0], [ignore])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - hex round-trip allow])
+AT_DATA([test-data], [dnl
+# actions=sec_policy(id=1,verdict=allow)
+ffff 0010 00002320 0034 0001 01 000000
+
+])
+sed '/^[[#&]]/d' < test-data > input.txt
+sed -n 's/^# //p; /^$/p' < test-data > expout
+AT_CHECK([ovs-ofctl parse-actions OpenFlow15 < input.txt], [0], [expout])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - hex round-trip deny])
+AT_DATA([test-data], [dnl
+# actions=sec_policy(id=10,verdict=deny)
+ffff 0010 00002320 0034 000a 00 000000
+
+])
+sed '/^[[#&]]/d' < test-data > input.txt
+sed -n 's/^# //p; /^$/p' < test-data > expout
+AT_CHECK([ovs-ofctl parse-actions OpenFlow10 < input.txt], [0], [expout])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - hex invalid verdict rejected])
+AT_DATA([input.txt], [dnl
+ffff 0010 00002320 0034 0001 07 000000
+])
+AT_CHECK([ovs-ofctl parse-actions OpenFlow15 < input.txt], [0], [stdout],
+         [ignore])
+AT_CHECK([grep 'OFPBAC_BAD_ARGUMENT' stdout], [0], [ignore])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - invalid verdict string rejected])
+AT_CHECK([ovs-ofctl parse-flow 'actions=sec_policy(id=1,verdict=maybe)'],
+         [1], [ignore], [stderr])
+AT_CHECK([grep "invalid verdict 'maybe'" stderr], [0], [ignore])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - missing id rejected])
+AT_CHECK([ovs-ofctl parse-flow 'actions=sec_policy(verdict=allow)'],
+         [1], [ignore], [stderr])
+AT_CHECK([grep 'sec_policy(id=N,verdict=allow|deny)' stderr], [0], [ignore])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - missing verdict rejected])
+AT_CHECK([ovs-ofctl parse-flow 'actions=sec_policy(id=1)'],
+         [1], [ignore], [stderr])
+AT_CHECK([grep 'sec_policy(id=N,verdict=allow|deny)' stderr], [0], [ignore])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - invalid key rejected])
+AT_CHECK([ovs-ofctl parse-flow 'actions=sec_policy(id=1,foo=2,verdict=allow)'],
+         [1], [ignore], [stderr])
+AT_CHECK([grep "invalid key 'foo'" stderr], [0], [ignore])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - policy id out of range rejected])
+AT_CHECK([ovs-ofctl parse-flow 'actions=sec_policy(id=70000,verdict=allow)'],
+         [1], [ignore], [stderr])
+AT_CHECK([grep 'invalid id "70000"' stderr], [0], [ignore])
+AT_CLEANUP
+
+AT_SETUP([sec_policy - allow forwards packet])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+AT_CHECK([ovs-ofctl add-flow br0 'in_port=1,actions=sec_policy(id=1,verdict=allow),output:2'])
+AT_CHECK([ovs-appctl ofproto/trace br0 'in_port=1,dl_src=50:54:00:00:00:05,dl_dst=50:54:00:00:00:07,dl_type=0x0800,nw_src=192.168.0.1,nw_dst=192.168.0.2'], [0], [stdout])
+AT_CHECK([grep 'security policy 1 allows packet' stdout], [0], [ignore])
+AT_CHECK([tail -1 stdout], [0], [Datapath actions: 2
+])
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([sec_policy - deny drops packet])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+AT_CHECK([ovs-ofctl add-flow br0 'in_port=1,actions=sec_policy(id=7,verdict=deny),output:2'])
+AT_CHECK([ovs-appctl ofproto/trace br0 'in_port=1,dl_src=50:54:00:00:00:05,dl_dst=50:54:00:00:00:07,dl_type=0x0800,nw_src=192.168.0.1,nw_dst=192.168.0.2'], [0], [stdout])
+AT_CHECK([grep 'security policy 7 denies packet, dropping' stdout],
+         [0], [ignore])
+AT_CHECK([tail -1 stdout], [0], [Datapath actions: drop
+])
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([sec_policy - multiple allow checkpoints forward])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+AT_CHECK([ovs-ofctl add-flow br0 'in_port=1,actions=sec_policy(id=1,verdict=allow),sec_policy(id=2,verdict=allow),output:2'])
+AT_CHECK([ovs-appctl ofproto/trace br0 'in_port=1,dl_src=50:54:00:00:00:05,dl_dst=50:54:00:00:00:07,dl_type=0x0800,nw_src=192.168.0.1,nw_dst=192.168.0.2'], [0], [stdout])
+AT_CHECK([grep 'security policy 1 allows packet' stdout], [0], [ignore])
+AT_CHECK([grep 'security policy 2 allows packet' stdout], [0], [ignore])
+AT_CHECK([tail -1 stdout], [0], [Datapath actions: 2
+])
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([sec_policy - allow then deny drops])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+AT_CHECK([ovs-ofctl add-flow br0 'in_port=1,actions=sec_policy(id=1,verdict=allow),sec_policy(id=2,verdict=deny),output:2'])
+AT_CHECK([ovs-appctl ofproto/trace br0 'in_port=1,dl_src=50:54:00:00:00:05,dl_dst=50:54:00:00:00:07,dl_type=0x0800,nw_src=192.168.0.1,nw_dst=192.168.0.2'], [0], [stdout])
+AT_CHECK([grep 'security policy 1 allows packet' stdout], [0], [ignore])
+AT_CHECK([grep 'security policy 2 denies packet, dropping' stdout],
+         [0], [ignore])
+AT_CHECK([tail -1 stdout], [0], [Datapath actions: drop
+])
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([sec_policy - dump-flows shows action])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+AT_CHECK([ovs-ofctl add-flow br0 'in_port=1,actions=sec_policy(id=3,verdict=allow),output:2'])
+AT_CHECK([ovs-ofctl dump-flows br0 | grep 'sec_policy(id=3,verdict=allow)'],
+         [0], [ignore])
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([sec_policy - all group with allow buckets])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2 3
+AT_CHECK([ovs-ofctl -O OpenFlow15 add-group br0 'group_id=1,type=all,bucket=sec_policy(id=1,verdict=allow),output:2,bucket=sec_policy(id=2,verdict=allow),output:3'])
+AT_CHECK([ovs-ofctl add-flow br0 'in_port=1,actions=group:1'])
+AT_CHECK([ovs-appctl ofproto/trace br0 'in_port=1,dl_src=50:54:00:00:00:05,dl_dst=50:54:00:00:00:07,dl_type=0x0800,nw_src=192.168.0.1,nw_dst=192.168.0.2'], [0], [stdout])
+AT_CHECK([tail -1 stdout], [0], [Datapath actions: 2,3
+])
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([sec_policy - all group with deny bucket])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2 3
+AT_CHECK([ovs-ofctl -O OpenFlow15 add-group br0 'group_id=1,type=all,bucket=sec_policy(id=1,verdict=deny),output:2,bucket=sec_policy(id=2,verdict=allow),output:3'])
+AT_CHECK([ovs-ofctl add-flow br0 'in_port=1,actions=group:1'])
+AT_CHECK([ovs-appctl ofproto/trace br0 'in_port=1,dl_src=50:54:00:00:00:05,dl_dst=50:54:00:00:00:07,dl_type=0x0800,nw_src=192.168.0.1,nw_dst=192.168.0.2'], [0], [stdout])
+AT_CHECK([grep 'security policy 1 denies packet, dropping' stdout],
+         [0], [ignore])
+AT_CHECK([tail -1 stdout], [0], [Datapath actions: drop,3
+])
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([sec_policy - select group with allow bucket])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+AT_CHECK([ovs-ofctl -O OpenFlow15 add-group br0 'group_id=1,type=select,bucket=sec_policy(id=1,verdict=allow),output:2'])
+AT_CHECK([ovs-ofctl add-flow br0 'in_port=1,actions=sec_policy(id=2,verdict=allow),group:1'])
+AT_CHECK([ovs-appctl ofproto/trace br0 'in_port=1,dl_src=50:54:00:00:00:05,dl_dst=50:54:00:00:00:07,dl_type=0x0800,nw_src=192.168.0.1,nw_dst=192.168.0.2'], [0], [stdout])
+AT_CHECK([grep 'security policy 2 allows packet' stdout], [0], [ignore])
+AT_CHECK([grep 'group:1' stdout], [0], [ignore])
+AT_CHECK([grep 'selection method in use' stdout], [0], [ignore])
+OVS_VSWITCHD_STOP
+AT_CLEANUP
+
+AT_SETUP([sec_policy - group table add dump delete])
+OVS_VSWITCHD_START
+add_of_ports br0 1 2
+AT_CHECK([ovs-ofctl -O OpenFlow15 add-group br0 'group_id=5,type=all,bucket=sec_policy(id=9,verdict=allow),output:2'])
+AT_CHECK([ovs-ofctl -O OpenFlow15 dump-groups br0 | grep 'sec_policy(id=9,verdict=allow)'], [0], [ignore])
+AT_CHECK([ovs-ofctl -O OpenFlow15 del-groups br0])
+AT_CHECK([ovs-ofctl -O OpenFlow15 dump-groups br0 | grep -c 'group_id='],
+         [1], [0
+])
+OVS_VSWITCHD_STOP
+AT_CLEANUP

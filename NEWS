@@ -1,5 +1,10 @@
 Post-v4.0.0
 --------------------
+   - OpenFlow:
+     * New Nicira extension action "sec_policy(id=N,verdict=allow|deny)"
+       that implements a security policy checkpoint in the flow table:
+       "allow" lets the packet continue through the pipeline, "deny" drops
+       it immediately.  The action can be combined with group tables.
    - ovs-appctl:
      * Added JSON output support (--format json) for 'fdb/stats-show',
        'upcall/show', 'dpif-netdev/pmd-sleep-show'.

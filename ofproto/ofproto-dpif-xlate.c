@@ -6548,6 +6548,7 @@ freeze_unroll_actions(const struct ofpact *a, const struct ofpact *end,
         case OFPACT_NAT:
         case OFPACT_CHECK_PKT_LARGER:
         case OFPACT_DELETE_FIELD:
+        case OFPACT_SEC_POLICY:
             /* These may not generate PACKET INs. */
             break;
 
@@ -6811,6 +6812,25 @@ compose_ct_clear_action(struct xlate_ctx *ctx)
      * compatibility, only append it if the dpif supports it. */
     if (ctx->xbridge->support.ct_clear) {
         nl_msg_put_flag(ctx->odp_actions,  OVS_ACTION_ATTR_CT_CLEAR);
+    }
+}
+
+/* The sec_policy action is a security policy checkpoint.  An "allow"
+ * verdict lets the packet continue through the pipeline.  A "deny" verdict
+ * drops the packet immediately and stops executing the remaining actions. */
+static void
+xlate_sec_policy(struct xlate_ctx *ctx, const struct ofpact_sec_policy *sp)
+{
+    if (sp->verdict == SEC_POLICY_DENY) {
+        xlate_report(ctx, OFT_DETAIL,
+                     "security policy %"PRIu16" denies packet, dropping",
+                     sp->policy_id);
+        put_drop_action(ctx->xbridge->ofproto, ctx->odp_actions, XLATE_OK);
+        ctx->exit = true;
+    } else {
+        xlate_report(ctx, OFT_DETAIL,
+                     "security policy %"PRIu16" allows packet",
+                     sp->policy_id);
     }
 }
 
@@ -7334,6 +7354,7 @@ recirc_for_mpls(const struct ofpact *a, struct xlate_ctx *ctx)
     case OFPACT_GOTO_TABLE:
     case OFPACT_CHECK_PKT_LARGER:
     case OFPACT_DELETE_FIELD:
+    case OFPACT_SEC_POLICY:
     default:
         break;
     }
@@ -7463,6 +7484,7 @@ reset_mirror_ctx(struct xlate_ctx *ctx, const struct flow *flow,
     case OFPACT_CT_CLEAR:
     case OFPACT_CHECK_PKT_LARGER:
     case OFPACT_DELETE_FIELD:
+    case OFPACT_SEC_POLICY:
     case OFPACT_NOTE:
     case OFPACT_CONJUNCTION:
         return;
@@ -7943,6 +7965,10 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             }
             break;
         }
+
+        case OFPACT_SEC_POLICY:
+            xlate_sec_policy(ctx, ofpact_get_SEC_POLICY(a));
+            break;
         }
 
         /* Check if need to store this and the remaining actions for later

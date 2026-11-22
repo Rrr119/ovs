@@ -366,6 +366,9 @@ enum ofp_raw_action_type {
     /* NX1.0+(50): struct nx_action_delete_field. VLMFF */
     NXAST_RAW_DELETE_FIELD,
 
+    /* NX1.0+(52): struct nx_action_sec_policy. */
+    NXAST_RAW_SEC_POLICY,
+
 /* ## ------------------ ## */
 /* ## Debugging actions. ## */
 /* ## ------------------ ## */
@@ -507,6 +510,7 @@ ofpact_next_flattened(const struct ofpact *ofpact)
     case OFPACT_DEC_NSH_TTL:
     case OFPACT_CHECK_PKT_LARGER:
     case OFPACT_DELETE_FIELD:
+    case OFPACT_SEC_POLICY:
         return ofpact_next(ofpact);
 
     case OFPACT_CLONE:
@@ -4256,6 +4260,126 @@ check_DELETE_FIELD(const struct ofpact_delete_field *odf,
 {
     if (odf->field->id < MFF_TUN_METADATA0 ||
         odf->field->id > MFF_TUN_METADATA63) {
+        return OFPERR_OFPBAC_BAD_ARGUMENT;
+    }
+    return 0;
+}
+
+/* Security policy action.
+ *
+ * The "sec_policy" action is a security policy checkpoint for virtual
+ * network security policies implemented with flow tables.  It carries a
+ * 16-bit policy identifier and a verdict:
+ *
+ *   - "allow": the packet passes the checkpoint and the pipeline continues
+ *     with the remaining actions.
+ *
+ *   - "deny": the packet violates the security policy and is dropped
+ *     immediately; no further actions are executed.
+ *
+ * The action is a Nicira extension action, so it is compatible with all
+ * existing OpenFlow versions and may be combined with any other actions,
+ * including group table output. */
+struct nx_action_sec_policy {
+    ovs_be16 type;              /* OFPAT_VENDOR. */
+    ovs_be16 len;               /* 16. */
+    ovs_be32 vendor;            /* NX_VENDOR_ID. */
+    ovs_be16 subtype;           /* NXAST_SEC_POLICY. */
+    ovs_be16 policy_id;         /* Security policy identifier. */
+    uint8_t verdict;            /* 0 = deny, 1 = allow. */
+    uint8_t pad[3];
+};
+OFP_ASSERT(sizeof(struct nx_action_sec_policy) == 16);
+
+static enum ofperr
+decode_NXAST_RAW_SEC_POLICY(const struct nx_action_sec_policy *nasp,
+                            enum ofp_version ofp_version OVS_UNUSED,
+                            struct ofpbuf *out)
+{
+    struct ofpact_sec_policy *sec_policy;
+
+    sec_policy = ofpact_put_SEC_POLICY(out);
+    sec_policy->policy_id = ntohs(nasp->policy_id);
+    sec_policy->verdict = nasp->verdict;
+
+    if (sec_policy->verdict != SEC_POLICY_ALLOW
+        && sec_policy->verdict != SEC_POLICY_DENY) {
+        return OFPERR_OFPBAC_BAD_ARGUMENT;
+    }
+    return 0;
+}
+
+static void
+encode_SEC_POLICY(const struct ofpact_sec_policy *sec_policy,
+                  enum ofp_version ofp_version OVS_UNUSED,
+                  struct ofpbuf *out)
+{
+    struct nx_action_sec_policy *nasp = put_NXAST_SEC_POLICY(out);
+
+    nasp->policy_id = htons(sec_policy->policy_id);
+    nasp->verdict = sec_policy->verdict;
+}
+
+static char * OVS_WARN_UNUSED_RESULT
+parse_SEC_POLICY(char *arg, const struct ofpact_parse_params *pp)
+{
+    struct ofpact_sec_policy *sec_policy = ofpact_put_SEC_POLICY(pp->ofpacts);
+    bool have_id = false;
+    bool have_verdict = false;
+    char *key, *value;
+
+    while (ofputil_parse_key_value(&arg, &key, &value)) {
+        char *error;
+
+        if (!strcmp(key, "id")) {
+            error = str_to_u16(value, key, &sec_policy->policy_id);
+            have_id = true;
+        } else if (!strcmp(key, "verdict")) {
+            if (!strcmp(value, "allow")) {
+                sec_policy->verdict = SEC_POLICY_ALLOW;
+            } else if (!strcmp(value, "deny")) {
+                sec_policy->verdict = SEC_POLICY_DENY;
+            } else {
+                error = xasprintf("invalid verdict '%s' in 'sec_policy' "
+                                  "argument: must be 'allow' or 'deny'",
+                                  value);
+            }
+            have_verdict = true;
+        } else {
+            error = xasprintf("invalid key '%s' in 'sec_policy' argument",
+                              key);
+        }
+
+        if (error) {
+            return error;
+        }
+    }
+
+    if (!have_id || !have_verdict) {
+        return xstrdup("\"sec_policy\" syntax is "
+                       "\"sec_policy(id=N,verdict=allow|deny)\"");
+    }
+    return NULL;
+}
+
+static void
+format_SEC_POLICY(const struct ofpact_sec_policy *a,
+                  const struct ofpact_format_params *fp)
+{
+    ds_put_format(fp->s, "%ssec_policy(%s%sid=%s%"PRIu16
+                  ",%sverdict=%s%s%s)%s",
+                  colors.paren, colors.end,
+                  colors.param, colors.end, a->policy_id,
+                  colors.param, colors.end,
+                  a->verdict == SEC_POLICY_ALLOW ? "allow" : "deny",
+                  colors.paren, colors.end);
+}
+
+static enum ofperr
+check_SEC_POLICY(const struct ofpact_sec_policy *a,
+                 const struct ofpact_check_params *cp OVS_UNUSED)
+{
+    if (a->verdict != SEC_POLICY_ALLOW && a->verdict != SEC_POLICY_DENY) {
         return OFPERR_OFPBAC_BAD_ARGUMENT;
     }
     return 0;
@@ -8145,7 +8269,8 @@ ofpact_copy(struct ofpbuf *out, const struct ofpact *a)
     SLOT(OFPACT_PUSH_VLAN)                      \
     SLOT(OFPACT_DEC_TTL)                        \
     SLOT(OFPACT_DEC_MPLS_TTL)                   \
-    SLOT(OFPACT_DEC_NSH_TTL)
+    SLOT(OFPACT_DEC_NSH_TTL)                    \
+    SLOT(OFPACT_SEC_POLICY)
 
 /* Priority for "final actions" in an action set.  An action set only gets
  * executed at all if at least one of these actions is present.  If more than
@@ -8447,6 +8572,7 @@ ovs_instruction_type_from_ofpact_type(enum ofpact_type type,
     case OFPACT_DEC_NSH_TTL:
     case OFPACT_CHECK_PKT_LARGER:
     case OFPACT_DELETE_FIELD:
+    case OFPACT_SEC_POLICY:
     default:
         return OVSINST_OFPIT11_APPLY_ACTIONS;
     }
@@ -9359,6 +9485,7 @@ ofpact_outputs_to_port(const struct ofpact *ofpact, ofp_port_t port)
     case OFPACT_DEC_NSH_TTL:
     case OFPACT_CHECK_PKT_LARGER:
     case OFPACT_DELETE_FIELD:
+    case OFPACT_SEC_POLICY:
     default:
         return false;
     }
